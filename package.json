@@ -1,0 +1,33 @@
+{
+  "name": "fastls",
+  "version": "1.0.0",
+  "description": "A fast, feature-rich localStorage wrapper with nested object support, serialization, and advanced querying - make serializion our problem.",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest --env=jsdom"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JOrE20/fastls.git"
+  },
+  "keywords": [
+    "localstorage",
+    "storage",
+    "browser",
+    "persistence",
+    "serialization",
+    "database",
+    "wrapper",
+    "nested",
+    "objects",
+    "query",
+    "fast",
+    "fastls"
+  ],
+  "author": "JOrE",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/JOrE20/fastls/issues"
+  },
+  "homepage": "https://github.com/JOrE20/fastls#readme"
+}
