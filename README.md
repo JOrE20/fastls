@@ -46,18 +46,18 @@ import FastLS from 'fastls';
 const db = new FastLS('my-database');
 
 // Store data
-await db.set('user.profile.name', 'John Doe');
-await db.set('user.profile.age', 30);
+db.set('user.profile.name', 'John Doe'); // No await for simple usage!
+db.set('user.profile.age', 30);
 
 // Retrieve data
-const userName = await db.get('user.profile.name'); // 'John Doe'
+const userName = db.get('user.profile.name'); // 'John Doe'
 
 // Use folders
-await db.set('documents\\reports\\Q1.data', { revenue: 50000, profit: 15000 });
+db.set('documents/reports/Q1.data', { revenue: 50000, profit: 15000 });
 
 // Create shortcuts
-await db.setShortcut('q1-report', 'documents\\reports\\Q1.data');
-const report = await db.get('q1-report'); // { revenue: 50000, profit: 15000 }
+db.setShortcut('q1-report', 'documents/reports/Q1.data');
+const report = db.get('q1-report'); // { revenue: 50000, profit: 15000 }
 ```
 
 ## Change Log
@@ -81,6 +81,10 @@ const report = await db.get('q1-report'); // { revenue: 50000, profit: 15000 }
 * There is `db.clean(path, checker, inputKey)`. Given a path, and a checker like `v => v.includes('_clean_if_old')` or anything else, it removes keys which your function returned `true` for them. `inputKey` tells include key as a function parameter or not. Do not use a random condition!
 * **A major bug fixed. This tool wouldn't ever work at all.**
 
+### v2.1.1 (Patch)
+* No feature were added or removed - just this library **fully** tested and fixed all bugs.
+* The documention updated and corrected.
+
 ## 📚 Storage Backends
 ### localStorage (Default)
 ```javascript
@@ -103,15 +107,18 @@ FastLS introduces a powerful folder system that organizes your data hierarchical
 
 ```javascript
 // Create nested folder structures
-await db.set('company\\departments\\engineering\\team.lead', 'Alice');
-await db.set('company\\departments\\engineering\\team.members', 15);
-await db.set('company\\departments\\marketing\\budget', 50000);
+db.set('company/departments/engineering/team.lead', 'Alice');
+db.set('company/departments/engineering/team.members', 15);
+db.set('company/departments/marketing/budget', 50000);
+
+// Create a folder structure (empty, without keys)
+db.createFolder('company/employees/engineering')
 
 // Navigate using parent directory
-const engineeringLead = await db.get('company\\departments\\marketing\\..\\engineering\\team.lead'); // 'Alice'
+const engineeringLead = db.get('company/departments/marketing/../engineering/team.lead'); // 'Alice'
 
 // Access root
-const rootData = await db.get('\\company\\departments');
+const rootData = db.get('/company/departments');
 ```
 
 ## Path Validation
@@ -121,11 +128,11 @@ Paths cannot contain `:`, `\` or `/` (v2.1+) characters in key names, and cannot
 Create convenient aliases for complex paths:
 
 ```javascript
-await db.setShortcut('eng-team', 'company\\departments\\engineering\\team');
-await db.setShortcut('mkt-budget', 'company\\departments\\marketing\\budget');
+db.setShortcut('eng-team', 'company/departments/engineering/team');
+db.setShortcut('mkt-budget', 'company/departments/marketing/budget');
 
-const team = await db.get('eng-team'); // { lead: 'Alice', members: 15 }
-const budget = await db.get('mkt-budget'); // 50000
+const team = db.get('eng-team'); // { lead: 'Alice', members: 15 }
+const budget = db.get('mkt-budget'); // 50000
 ```
 
 ## 🔍 Advanced Search
@@ -137,17 +144,17 @@ const users = {
   charlie: { age: 25, role: 'admin' }
 };
 
-await db.set('company\\users', users);
+db.set('company/users', users);
 
 // Find all admins
-const admins = await db.search('company\\users', user => user.role === 'admin');
+const admins = db.search('company/users', user => user.role === 'admin');
 // [{ age: 28, role: 'admin' }, { age: 25, role: 'admin' }]
 ```
 ### Search with Keys
 ```javascript
 // Find users with age > 30 and key containing 'bob'
-const results = await db.search(
-  'company\\users', 
+const results = db.search(
+  'company/users', 
   (key, value) => value.age > 30 && key.includes('bob'),
   true // include key in predicate
 );
@@ -155,16 +162,15 @@ const results = await db.search(
 ### Find Paths
 ```javascript
 // Find the path to users with age 25
-const path = await db.path('company\\users', user => user.age === 25);
+const path = db.path('company/users', user => user.age === 25);
 // 'charlie'
 ```
-
 
 ## 🗂️ Quotas 
 
 `db.setQuota(123456)` - limit the global usage of database in bytes
 `db.removeQuota()` - remove current quotas limit
-`db.setFolderQuota('folder\\folder 2', bytes)` - set quota to only a specified folder (less than global limit to be meaningful)
+`db.setFolderQuota('folder/folder 2', bytes)` - set quota to only a specified folder (less than global limit to be meaningful)
 `db.quotaMessage` - `'meet'` if successfully increased database size (e.g., by `db.set()`) or `'cannotSave` if the key or it's name couldn't ever saved at all.
 
 ## 🗑️ Flexible Removal
@@ -172,30 +178,30 @@ FastLS provides multiple removal strategies:
 
 ```javascript
 // Remove specific key
-await db.removeKey('company\\departments\\engineering\\team.lead');
+db.removeKey('company/departments/engineering/team.lead');
 
 // Remove entire folder and contents
-await db.remove('company\\departments\\engineering', 'folder');
+db.remove('company/departments/engineering', 'folder');
 
 // Remove only root keys, keep folder structure
-await db.remove('company\\departments', 'root');
+db.remove('company/departments', 'root');
 
 // Delete folder contents but keep structure
-await db.remove('company\\departments', 'structure');
+db.remove('company/departments', 'structure');
 
 // Keep root keys, delete nested folders
-await db.remove('company\\departments', 'nestedFolders');
+db.remove('company/departments', 'nestedFolders');
 
 // Clear entire database
-await db.remove(null, 'database');
+db.remove(null, 'database');
 
 // Clear all keys but keep database
-await db.remove(null, 'databaseKeys');
+db.remove(null, 'databaseKeys');
 
 // Batch operations
-await db.remove(
-  'company\\departments\\engineering', 'nestedFolders',
-  'company\\departments\\marketing', 'root'
+db.remove(
+  'company/departments/engineering', 'nestedFolders',
+  'company/departments/marketing', 'root'
 );
 ```
 
@@ -207,10 +213,10 @@ const mainDB = new FastLS('main-database');
 const analyticsDB = new FastLS('analytics-data');
 
 // Store data in analytics DB
-await analyticsDB.set('page-views.home', 1500);
+analyticsDB.set('page-views.home', 1500);
 
 // Access from main DB
-const views = await mainDB.get('analytics-data:page-views.home'); // 1500
+const views = mainDB.get('analytics-data:page-views.home'); // 1500
 ```
 ## 💾 Custom Storage & File Operations
 ```javascript
@@ -350,16 +356,16 @@ Upload database from a file.
 ```javascript
 // Store functions (saved as parameters)
 const multiplier = (a, b) => a * b;
-await db.set('math\\operations\\multiply', multiplier);
+db.set('math/operations/multiply', multiplier);
 
 // Later retrieve and use
-const storedFunc = await db.get('math\\operations\\multiply');
+const storedFunc = db.get('math/operations/multiply');
 const result = storedFunc(5, 3); // 15
 ```
 
 ### Complex Data Structures
 ```javascript
-await db.set('app\\data\\users[0].profile', {
+db.set('app/data/users[0].profile', {
   name: 'Alice',
   preferences: {
     theme: 'dark',
@@ -367,28 +373,28 @@ await db.set('app\\data\\users[0].profile', {
   }
 });
 
-await db.set('app\\data\\users[1].profile.name', 'Bob');
-const user = await db.get('app\\data\\users[0].profile.preferences.theme'); // 'dark'
+db.set('app/data/users[1].profile.name', 'Bob');
+const user = db.get('app/data/users[0].profile.preferences.theme'); // 'dark'
 ```
 
 ### Batch Operations
 ```javascript
 // Multiple operations in sequence
-await db.set('data\\key1', 'value1');
-await db.set('data\\key2', 'value2');
-await db.setShortcut('quick1', 'data\\key1');
+db.set('data/key1', 'value1');
+db.set('data/key2', 'value2');
+db.setShortcut('quick1', 'data/key1');
 ```
 
 ## 🚨 Error Handling
 ```javascript
 try {
-  await db.set('invalid:path', 'value'); // Throws error due to ':'
+  db.set('invalid:path', 'value'); // Throws error due to ':'
 } catch (error) {
   console.error('Invalid path:', error.message);
 }
 
 try {
-  await db.set('..', 'value'); // Throws error
+  db.set('..', 'value'); // Throws error
 } catch (error) {
   console.error('Cannot set parent directory as key');
 }
