@@ -18,6 +18,7 @@
 - **Flexible Data Types**: Support for functions, objects, arrays, and more
 - **Compression**: Optional GZIP compression for storage efficiency
 - **Case Sensitivity**: Configurable key case sensitivity
+- **Tiny Package & Zero Dependencies**: This package wouldn't ever has a dependency and it could be as small as 4KB (gzipped) or 15KB (minified), and never slowdown your page at all.
 
 ## 📦 Installation
 
@@ -59,6 +60,27 @@ await db.setShortcut('q1-report', 'documents\\reports\\Q1.data');
 const report = await db.get('q1-report'); // { revenue: 50000, profit: 15000 }
 ```
 
+## Change Log
+
+### v1.0
+* Initial release
+
+### v2.0 (Major)
+* Storage backends (IndexedDB, localStorage and CustomDB)
+* Cross-database access
+* Shortcuts, folders and nesting folders
+* Added quotas
+* Supports error handling and a much smarter way to remove keys.
+
+
+### v2.1 (Minor)
+* Can now save blobs.
+* `auto:` prefix automatically uses IndexedDB or localStorage if IndexedDB is not usable. A await is needed even if localStorage picked.
+* The usage of `\` character was problematic because the special usage in JavaScript. You can also use `/` for going into folders.
+* Added gzipped version of library. It's as tiny as 4KB (vs 30KB original code)!
+* There is `db.clean(path, checker, inputKey)`. Given a path, and a checker like `v => v.includes('_clean_if_old')` or anything else, it removes keys which your function returned `true` for them. `inputKey` tells include key as a function parameter or not. Do not use a random condition!
+* **A major bug fixed. This tool wouldn't ever work at all.**
+
 ## 📚 Storage Backends
 ### localStorage (Default)
 ```javascript
@@ -93,7 +115,7 @@ const rootData = await db.get('\\company\\departments');
 ```
 
 ## Path Validation
-Paths cannot contain `:` or `\` characters in key names, and cannot be exactly `..`.
+Paths cannot contain `:`, `\` or `/` (v2.1+) characters in key names, and cannot be exactly `..`.
 
 ## 🔗 Shortcuts
 Create convenient aliases for complex paths:
@@ -143,7 +165,7 @@ const path = await db.path('company\\users', user => user.age === 25);
 `db.setQuota(123456)` - limit the global usage of database in bytes
 `db.removeQuota()` - remove current quotas limit
 `db.setFolderQuota('folder\\folder 2', bytes)` - set quota to only a specified folder (less than global limit to be meaningful)
-`db.quotaMessage` - `'meet'` if successfully increased database size (e.g., by `db.set()`), `'storedNull'` if the key name could saved but the value wouldn't able to save (used `null`), or `'cannotSave` if the key or it's name couldn't ever saved.
+`db.quotaMessage` - `'meet'` if successfully increased database size (e.g., by `db.set()`) or `'cannotSave` if the key or it's name couldn't ever saved at all.
 
 ## 🗑️ Flexible Removal
 FastLS provides multiple removal strategies:
