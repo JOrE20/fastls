@@ -1,18 +1,52 @@
 class FastLS {
     constructor(databaseName, gzipped = false, caseSen = true, useAsync = false) {
-        // Handle undefined or null databaseName
-        if (databaseName === undefined || databaseName === null) {
-            throw new Error('Database name is required');
+        // Handle auto: prefix for automatic storage backend selection
+        if (databaseName && databaseName.startsWith('auto:')) {
+            databaseName = databaseName.substring(5);
+            // Test for IndexedDB availability
+            if (typeof indexedDB !== 'undefined') {
+                try {
+                    const request = indexedDB.open('test');
+                    request.onerror = () => {
+                        this.useIndexedDB = false;
+                        this.useLocalStorage = true;
+                    };
+                    request.onsuccess = () => {
+                        this.useIndexedDB = true;
+                        this.useLocalStorage = false;
+                        indexedDB.deleteDatabase('test');
+                    };
+                } catch {
+                    this.useIndexedDB = false;
+                    this.useLocalStorage = true;
+                }
+            } else {
+                this.useIndexedDB = false;
+                this.useLocalStorage = true;
+            }
+            this.useCustomDB = false;
+        } else {
+            // Handle undefined or null databaseName
+            if (databaseName === undefined || databaseName === null) {
+                throw new Error('Database name is required');
+            }
+            
+            this.useIndexedDB = /^(indexeddb:|kv:)/i.test(databaseName);
+            this.useCustomDB = /^customdb:/i.test(databaseName);
+            this.useLocalStorage = !this.useIndexedDB && !this.useCustomDB;
         }
         
-        this.dbName = String(databaseName).replace(/^(customdb:|indexeddb:|kv:)/i, '');
+        this.dbName = String(databaseName).replace(/^(customdb:|indexeddb:|kv:|auto:)/i, '');
+        
+        // Validate database name
+        if (this.dbName.includes('/')) {
+            throw new Error('Database name cannot contain "/"');
+        }
+        
         this.gzipped = gzipped;
         this.caseSen = caseSen;
         this.useAsync = useAsync;
         this.rootStorageKey = 'fastLS';
-        this.useIndexedDB = /^(indexeddb:|kv:)/i.test(databaseName);
-        this.useCustomDB = /^customdb:/i.test(databaseName);
-        this.useLocalStorage = !this.useIndexedDB && !this.useCustomDB;
         
         // Initialize custom data storage
         this._customData = '';
@@ -90,7 +124,7 @@ class FastLS {
         return null;
     }
 
-    // Quota checking methods
+    // Quota checking methods - FIXED: Remove storing name with null value on quota blocking
     _calculateSize(data) {
         return new Blob([this._serializeData(data)]).size;
     }
@@ -107,15 +141,9 @@ class FastLS {
                 const projectedSize = currentFolderSize - currentPathSize + newValueSize;
                 
                 if (projectedSize > quota) {
-                    if (newValueSize <= quota) {
-                        // Can store as null
-                        this.quotaMessage = 'storedNull';
-                        return { allowed: true, storeNull: true };
-                    } else {
-                        // Cannot store at all
-                        this.quotaMessage = 'cannotSave';
-                        return { allowed: false };
-                    }
+                    // Cannot store at all - FIXED: Don't store null
+                    this.quotaMessage = 'cannotSave';
+                    return { allowed: false };
                 }
                 break;
             }
@@ -129,21 +157,15 @@ class FastLS {
             const projectedSize = currentSize - currentPathSize + newValueSize;
             
             if (projectedSize > this.quota) {
-                if (newValueSize <= this.quota) {
-                    // Can store as null
-                    this.quotaMessage = 'storedNull';
-                    return { allowed: true, storeNull: true };
-                } else {
-                    // Cannot store at all
-                    this.quotaMessage = 'cannotSave';
-                    return { allowed: false };
-                }
+                // Cannot store at all - FIXED: Don't store null
+                this.quotaMessage = 'cannotSave';
+                return { allowed: false };
             } else if (projectedSize === this.quota) {
                 this.quotaMessage = 'meet';
             }
         }
         
-        return { allowed: true, storeNull: false };
+        return { allowed: true };
     }
 
     _calculateFolderSize(db, folderPath) {
@@ -263,20 +285,17 @@ class FastLS {
         }
     }
 
-    // Helper method to handle async/sync execution
+    // Helper method to handle async/sync execution - FIXED: Remove the bug causing "read only property 'name'"
     _executeSync(operation) {
-        if (this.useLocalStorage && !this.useIndexedDB) {
+        if (this.useLocalStorage && !this.useIndexedDB && !this.useCustomDB) {
             // For localStorage in sync mode, we can execute operations directly
             try {
-                // This is a simplified sync execution - in reality, we'd need to handle promises
-                // For now, we'll use a simple approach that works for basic cases
-                let result;
                 const root = this._getRoot();
                 const db = root[this.dbName] || {};
                 
-                // For get operations, we can handle them directly
-                if (operation.name === 'getOperation') {
-                    const { path } = this._parseFullPath(arguments[0]);
+                // For get operations
+                if (operation.type === 'get') {
+                    const path = operation.path;
                     const directValue = db[path];
                     if (directValue && directValue.__fastls_exception_shortcut) {
                         return this.get(directValue.__fastls_exception_shortcut);
@@ -285,38 +304,41 @@ class FastLS {
                 }
                 
                 // For set operations
-                if (operation.name === 'setOperation') {
-                    const { path } = this._parseFullPath(arguments[0]);
-                    const value = arguments[1];
+                if (operation.type === 'set') {
+                    const path = operation.path;
+                    const value = operation.value;
                     
                     // Check quota before setting
                     const quotaCheck = this._checkQuotaBeforeSet(db, path, value);
                     if (!quotaCheck.allowed) {
-                        return quotaCheck;
+                        return { error: 'quota_exceeded', message: this.quotaMessage };
                     }
                     
-                    const valueToStore = quotaCheck.storeNull ? null : value;
-                    const updatedDB = this._setValueByPath(db, path, valueToStore);
+                    const updatedDB = this._setValueByPath(db, path, value);
                     root[this.dbName] = updatedDB;
-                    this._saveRoot(root);
-                    return quotaCheck;
+                    const saveResult = this._saveRoot(root);
+                    return { saveResult, quotaCheck, quotaMessage: this.quotaMessage };
                 }
                 
-                return result;
+                return undefined;
             } catch (error) {
                 console.error('Sync operation error:', error);
                 return undefined;
             }
         } else {
             // For IndexedDB or async-required operations, we can't truly be synchronous
-            console.warn('Synchronous mode not fully supported for IndexedDB. Some operations may not work as expected.');
+            console.warn('Synchronous mode not fully supported for IndexedDB/CustomDB. Some operations may not work as expected.');
             let result;
-            operation().then(res => result = res).catch(err => { throw err; });
+            // Create a proper async operation instead of trying to modify function.name
+            const asyncOp = async () => {
+                return await operation.fn();
+            };
+            asyncOp().then(res => result = res).catch(err => { throw err; });
             return result;
         }
     }
 
-    // Serialization with special format
+    // Serialization with special format - FIXED: Improved Blob handling
     _serializeData(data) {
         const serialized = JSON.stringify(data, (key, value) => {
             if (typeof value === 'function') {
@@ -327,6 +349,10 @@ class FastLS {
             }
             if (value && value.__fastls_exception_shortcut) {
                 return value;
+            }
+            // Handle Blob objects
+            if (value instanceof Blob) {
+                return { __fastls_blob: true, type: value.type, size: value.size };
             }
             return value;
         });
@@ -360,6 +386,10 @@ class FastLS {
                 if (value && value.__fastls_exception_shortcut) {
                     return value;
                 }
+                // Handle Blob reconstruction
+                if (value && value.__fastls_blob && typeof Blob !== 'undefined') {
+                    return new Blob([], { type: value.type });
+                }
                 return value;
             });
         } catch (e) {
@@ -368,7 +398,7 @@ class FastLS {
         }
     }
 
-    // Path manipulation with folder support
+    // Path manipulation with folder support - FIXED: Allow '/' in paths
     _normalizePath(path) {
         if (!path || typeof path !== 'string') return '';
         
@@ -393,8 +423,9 @@ class FastLS {
     }
 
     _validatePath(path) {
-        if (path && (path.includes(':') || path.includes('\\'))) {
-            throw new Error('Path cannot contain ":" or "\\" in key names');
+        // Allow '/' in paths, only validate against other problematic characters
+        if (path && path.includes(':')) {
+            throw new Error('Path cannot contain ":" in key names');
         }
         if (path === '..') {
             throw new Error('Path cannot be ".."');
@@ -524,90 +555,166 @@ class FastLS {
         return obj;
     }
 
-    // Core CRUD operations with folder support
+    // Core CRUD operations with folder support - FIXED: The main bug in set method
     get(fullPath) {
-        const operation = async () => {
-            try {
-                const { dbName, path } = this._parseFullPath(fullPath);
-                let targetDB = this;
-                
-                if (dbName && dbName !== this.dbName) {
-                    // Access different database
-                    targetDB = new FastLS(dbName, this.gzipped, this.caseSen, this.useAsync);
-                    if (targetDB.useIndexedDB) {
-                        await targetDB._initIndexedDB();
+        const { dbName, path } = this._parseFullPath(fullPath);
+        
+        if (this.useAsync || this.useIndexedDB || this.useCustomDB) {
+            return (async () => {
+                try {
+                    let targetDB = this;
+                    
+                    if (dbName && dbName !== this.dbName) {
+                        // Access different database
+                        targetDB = new FastLS(dbName, this.gzipped, this.caseSen, this.useAsync);
+                        if (targetDB.useIndexedDB) {
+                            await targetDB._initIndexedDB();
+                        }
                     }
+                    
+                    const db = await targetDB._getDatabase();
+                    
+                    // Handle shortcuts
+                    const directValue = db[path];
+                    if (directValue && directValue.__fastls_exception_shortcut) {
+                        return targetDB.get(directValue.__fastls_exception_shortcut);
+                    }
+                    
+                    return this._getValueByPath(db, path);
+                } catch (error) {
+                    console.error('FastLS get error:', error);
+                    return undefined;
                 }
-                
-                const db = await targetDB._getDatabase();
-                
-                // Handle shortcuts
-                const directValue = db[path];
-                if (directValue && directValue.__fastls_exception_shortcut) {
-                    return targetDB.get(directValue.__fastls_exception_shortcut);
-                }
-                
-                return this._getValueByPath(db, path);
-            } catch (error) {
-                console.error('FastLS get error:', error);
-                return undefined;
-            }
-        };
-
-        if (this.useAsync) {
-            return operation();
+            })();
         } else {
             // For sync mode, use the helper
-            operation.name = 'getOperation';
-            return this._executeSync(operation);
+            return this._executeSync({
+                type: 'get',
+                path: path,
+                fn: () => this.get(fullPath)
+            });
         }
     }
 
     set(fullPath, value) {
+        const { dbName, path } = this._parseFullPath(fullPath);
+        
+        if (path) {
+            this._validatePath(path);
+        }
+        
+        if (this.useAsync || this.useIndexedDB || this.useCustomDB) {
+            return (async () => {
+                try {
+                    let targetDB = this;
+                    if (dbName && dbName !== this.dbName) {
+                        targetDB = new FastLS(dbName, this.gzipped, this.caseSen, this.useAsync);
+                        if (targetDB.useIndexedDB) {
+                            await targetDB._initIndexedDB();
+                        }
+                    }
+                    
+                    const db = await targetDB._getDatabase();
+                    
+                    // Check quota before setting
+                    const quotaCheck = this._checkQuotaBeforeSet(db, path, value);
+                    if (!quotaCheck.allowed) {
+                        return {
+                            error: 'quota_exceeded',
+                            quotaCheck,
+                            quotaMessage: this.quotaMessage
+                        };
+                    }
+                    
+                    const updatedDB = this._setValueByPath(db, path, value);
+                    const saveResult = await targetDB._saveDatabase(updatedDB);
+                    
+                    return {
+                        saveResult,
+                        quotaCheck,
+                        quotaMessage: this.quotaMessage
+                    };
+                } catch (error) {
+                    console.error('FastLS set error:', error);
+                    return { error: error.message };
+                }
+            })();
+        } else {
+            // For sync mode, use the helper
+            return this._executeSync({
+                type: 'set', 
+                path: path,
+                value: value,
+                fn: () => this.set(fullPath, value)
+            });
+        }
+    }
+
+    // NEW: Clean function
+    clean(folderPath, predicate, includeKey = false) {
         const operation = async () => {
             try {
-                const { dbName, path } = this._parseFullPath(fullPath);
-                if (path) {
-                    this._validatePath(path);
-                }
+                const db = await this._getDatabase();
+                const normalizedPath = this._normalizePath(folderPath);
+                let cleanedCount = 0;
                 
-                let targetDB = this;
-                if (dbName && dbName !== this.dbName) {
-                    targetDB = new FastLS(dbName, this.gzipped, this.caseSen, this.useAsync);
-                    if (targetDB.useIndexedDB) {
-                        await targetDB._initIndexedDB();
+                for (const [key, value] of Object.entries(db)) {
+                    if (key.startsWith(normalizedPath + '\\') || key === normalizedPath) {
+                        const shouldKeep = includeKey ? predicate(key, value) : predicate(value);
+                        if (!shouldKeep) {
+                            delete db[key];
+                            cleanedCount++;
+                        }
                     }
                 }
                 
-                const db = await targetDB._getDatabase();
-                
-                // Check quota before setting
-                const quotaCheck = this._checkQuotaBeforeSet(db, path, value);
-                if (!quotaCheck.allowed) {
-                    return quotaCheck;
-                }
-                
-                const valueToStore = quotaCheck.storeNull ? null : value;
-                const updatedDB = this._setValueByPath(db, path, valueToStore);
-                const saveResult = await targetDB._saveDatabase(updatedDB);
-                
-                return {
-                    saveResult,
-                    quotaCheck,
-                    quotaMessage: this.quotaMessage
-                };
+                await this._saveDatabase(db);
+                return cleanedCount;
             } catch (error) {
-                console.error('FastLS set error:', error);
-                return error.message;
+                console.error('FastLS clean error:', error);
+                return -1;
             }
         };
 
-        if (this.useAsync) {
+        if (this.useAsync || this.useIndexedDB) {
             return operation();
         } else {
-            // For sync mode, use the helper
-            operation.name = 'setOperation';
-            return this._executeSync(operation);
+            return this._executeSync({ fn: operation });
+        }
+    }
+
+    // NEW: Create folder function
+    createFolder(folderPath) {
+        const operation = async () => {
+            try {
+                const normalizedPath = this._normalizePath(folderPath);
+                const db = await this._getDatabase();
+                
+                // Create folder structure by setting empty objects
+                const parts = normalizedPath.split('\\');
+                let currentPath = '';
+                
+                for (const part of parts) {
+                    if (currentPath) currentPath += '\\';
+                    currentPath += part;
+                    
+                    if (!db[currentPath]) {
+                        db[currentPath] = {};
+                    }
+                }
+                
+                await this._saveDatabase(db);
+                return normalizedPath;
+            } catch (error) {
+                console.error('FastLS createFolder error:', error);
+                return null;
+            }
+        };
+
+        if (this.useAsync || this.useIndexedDB) {
+            return operation();
+        } else {
+            return this._executeSync({ fn: operation });
         }
     }
 
@@ -650,10 +757,10 @@ class FastLS {
             }
         };
 
-        if (this.useAsync) {
+        if (this.useAsync || this.useIndexedDB) {
             return operation();
         } else {
-            return this._executeSync(operation);
+            return this._executeSync({ fn: operation });
         }
     }
 
@@ -692,10 +799,10 @@ class FastLS {
             }
         };
 
-        if (this.useAsync) {
+        if (this.useAsync || this.useIndexedDB) {
             return operation();
         } else {
-            return this._executeSync(operation);
+            return this._executeSync({ fn: operation });
         }
     }
 
@@ -769,10 +876,10 @@ class FastLS {
             }
         };
 
-        if (this.useAsync) {
+        if (this.useAsync || this.useIndexedDB) {
             return operation();
         } else {
-            return this._executeSync(operation);
+            return this._executeSync({ fn: operation });
         }
     }
 
@@ -848,10 +955,10 @@ class FastLS {
             }
         };
 
-        if (this.useAsync) {
+        if (this.useAsync || this.useIndexedDB) {
             return operation();
         } else {
-            return this._executeSync(operation);
+            return this._executeSync({ fn: operation });
         }
     }
 
@@ -934,10 +1041,10 @@ class FastLS {
             return value !== undefined;
         };
 
-        if (this.useAsync) {
+        if (this.useAsync || this.useIndexedDB) {
             return operation();
         } else {
-            return this._executeSync(operation);
+            return this._executeSync({ fn: operation });
         }
     }
 
@@ -947,10 +1054,10 @@ class FastLS {
             return Object.keys(db);
         };
 
-        if (this.useAsync) {
+        if (this.useAsync || this.useIndexedDB) {
             return operation();
         } else {
-            return this._executeSync(operation);
+            return this._executeSync({ fn: operation });
         }
     }
 
@@ -960,10 +1067,10 @@ class FastLS {
             return Object.values(db);
         };
 
-        if (this.useAsync) {
+        if (this.useAsync || this.useIndexedDB) {
             return operation();
         } else {
-            return this._executeSync(operation);
+            return this._executeSync({ fn: operation });
         }
     }
 
@@ -973,10 +1080,10 @@ class FastLS {
             return Object.entries(db);
         };
 
-        if (this.useAsync) {
+        if (this.useAsync || this.useIndexedDB) {
             return operation();
         } else {
-            return this._executeSync(operation);
+            return this._executeSync({ fn: operation });
         }
     }
 
@@ -985,10 +1092,10 @@ class FastLS {
             return await this._saveDatabase({});
         };
 
-        if (this.useAsync) {
+        if (this.useAsync || this.useIndexedDB) {
             return operation();
         } else {
-            return this._executeSync(operation);
+            return this._executeSync({ fn: operation });
         }
     }
 
@@ -998,10 +1105,10 @@ class FastLS {
             return new Blob([this._serializeData(db)]).size;
         };
 
-        if (this.useAsync) {
+        if (this.useAsync || this.useIndexedDB) {
             return operation();
         } else {
-            return this._executeSync(operation);
+            return this._executeSync({ fn: operation });
         }
     }
 
@@ -1011,10 +1118,10 @@ class FastLS {
             return Object.keys(db).length;
         };
 
-        if (this.useAsync) {
+        if (this.useAsync || this.useIndexedDB) {
             return operation();
         } else {
-            return this._executeSync(operation);
+            return this._executeSync({ fn: operation });
         }
     }
 
